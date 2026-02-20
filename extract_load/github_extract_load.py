@@ -212,4 +212,9 @@ def run_extract_load() -> None:
 
 
 if __name__ == "__main__":
-    run_extract_load()
+    import sys
+    if len(sys.argv) > 1:
+        # Called with a specific repo — used by Airflow BashOperator
+        extract_and_load_repo(sys.argv[1])
+    else:
+        run_extract_load()

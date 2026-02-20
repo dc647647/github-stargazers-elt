@@ -2,36 +2,33 @@
 Airflow DAG: stargazers_elt
 ============================
 Runs once daily:
-  1. extract_load__{repo}  – one parallel task per repo: GitHub API → DuckDB
+  1. extract_load__{repo}  – one BashOperator per repo (fresh subprocess, avoids
+                             macOS fork+network issues with PythonOperator)
   2. dbt_run               – runs dbt models (stg_stargazers, stargazer_summary)
   3. dbt_test              – runs dbt tests to validate the output
 
 Prerequisites
 -------------
 * Set AIRFLOW_HOME to the project root so Airflow picks up this dags/ folder.
-* Set GITHUB_TOKEN and optionally DUCKDB_PATH in your .env or environment.
+* Set GITHUB_TOKEN and per-repo tokens in your .env or environment.
 * dbt must be on PATH inside the Airflow worker environment.
 """
 
 import os
 import sys
-from functools import partial
 from pathlib import Path
 
 import pendulum
 from airflow import DAG
 from airflow.operators.bash import BashOperator
-from airflow.operators.python import PythonOperator
 
-# ---------------------------------------------------------------------------
-# Add project root to sys.path so PythonOperator can import extract_load/
-# ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from extract_load.github_extract_load import REPOS, extract_and_load_repo  # noqa: E402
+from extract_load.github_extract_load import REPOS  # noqa: E402
 
 DBT_PROJECT_DIR = str(PROJECT_ROOT / "dbt_project")
+PYTHON = str(PROJECT_ROOT / "venv" / "bin" / "python")
 DUCKDB_PATH = os.getenv(
     "DUCKDB_PATH", str(PROJECT_ROOT / "data" / "stargazers.duckdb")
 )
@@ -54,11 +51,13 @@ with DAG(
     tags=["github", "stargazers", "elt"],
 ) as dag:
 
-    # One extract+load task per repo — all run in parallel
+    # BashOperator spawns a fresh subprocess — avoids macOS fork+network hangs
     extract_tasks = [
-        PythonOperator(
+        BashOperator(
             task_id=f"extract_load__{repo.replace('/', '__').replace('-', '_')}",
-            python_callable=partial(extract_and_load_repo, repo=repo),
+            bash_command=f"{PYTHON} -m extract_load.github_extract_load '{repo}'",
+            env=TASK_ENV,
+            cwd=str(PROJECT_ROOT),
         )
         for repo in REPOS
     ]
@@ -75,5 +74,4 @@ with DAG(
         env=TASK_ENV,
     )
 
-    # All extract tasks must finish before dbt runs
     extract_tasks >> dbt_run_task >> dbt_test_task
