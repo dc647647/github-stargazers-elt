@@ -1,0 +1,24 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: main
+    description: "Raw stargazer records loaded from the GitHub API."
+    tables:
+      - name: raw_stargazers
+        description: "One row per (user, repo) star event."
+        columns:
+          - name: user_login
+            description: "GitHub username of the stargazer."
+          - name: user_id
+            description: "Numeric GitHub user ID (stable across username changes)."
+          - name: repo
+            description: "Repository in owner/repo format."
+          - name: starred_at
+            description: "Timestamp when the user starred the repo."
+          - name: avatar_url
+            description: "URL of the user's GitHub avatar."
+          - name: html_url
+            description: "URL of the user's GitHub profile."
+          - name: extracted_at
+            description: "UTC timestamp when this record was extracted."

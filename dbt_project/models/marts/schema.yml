@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: stargazer_summary
+    description: >
+      One row per GitHub user. Summarises their engagement with our tracked
+      repos: total repos starred, which repos, and when they first and last
+      starred one.
+    columns:
+      - name: user_id
+        description: "Stable numeric GitHub user ID (primary key)."
+        tests:
+          - not_null
+          - unique
+      - name: user_login
+        description: "GitHub username (may change; user_id is the stable key)."
+        tests:
+          - not_null
+      - name: repos_starred_count
+        description: "Number of tracked repos this user has starred."
+        tests:
+          - not_null
+      - name: repos_starred
+        description: "Ordered list of repos starred, from earliest to latest."
+      - name: first_starred_at
+        description: "Timestamp of this user's earliest star across all tracked repos."
+      - name: last_starred_at
+        description: "Timestamp of this user's most recent star across all tracked repos."

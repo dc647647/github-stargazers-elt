@@ -1,0 +1,7 @@
+stargazers:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '../data/stargazers.duckdb') }}"
+      schema: main
