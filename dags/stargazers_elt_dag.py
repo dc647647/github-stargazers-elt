@@ -2,9 +2,9 @@
 Airflow DAG: stargazers_elt
 ============================
 Runs once daily:
-  1. extract_load  – pulls stargazers from GitHub API → DuckDB (raw_stargazers)
-  2. dbt_run       – runs dbt models (stg_stargazers, stargazer_summary)
-  3. dbt_test      – runs dbt tests to validate the output
+  1. extract_load__{repo}  – one parallel task per repo: GitHub API → DuckDB
+  2. dbt_run               – runs dbt models (stg_stargazers, stargazer_summary)
+  3. dbt_test              – runs dbt tests to validate the output
 
 Prerequisites
 -------------
@@ -15,6 +15,7 @@ Prerequisites
 
 import os
 import sys
+from functools import partial
 from pathlib import Path
 
 import pendulum
@@ -28,14 +29,13 @@ from airflow.operators.python import PythonOperator
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from extract_load.github_extract_load import run_extract_load  # noqa: E402
+from extract_load.github_extract_load import REPOS, extract_and_load_repo  # noqa: E402
 
 DBT_PROJECT_DIR = str(PROJECT_ROOT / "dbt_project")
 DUCKDB_PATH = os.getenv(
     "DUCKDB_PATH", str(PROJECT_ROOT / "data" / "stargazers.duckdb")
 )
 
-# Propagate the resolved DuckDB path into BashOperator tasks
 TASK_ENV = {**os.environ, "DUCKDB_PATH": DUCKDB_PATH}
 
 default_args = {
@@ -54,10 +54,14 @@ with DAG(
     tags=["github", "stargazers", "elt"],
 ) as dag:
 
-    extract_load_task = PythonOperator(
-        task_id="extract_load",
-        python_callable=run_extract_load,
-    )
+    # One extract+load task per repo — all run in parallel
+    extract_tasks = [
+        PythonOperator(
+            task_id=f"extract_load__{repo.replace('/', '__').replace('-', '_')}",
+            python_callable=partial(extract_and_load_repo, repo=repo),
+        )
+        for repo in REPOS
+    ]
 
     dbt_run_task = BashOperator(
         task_id="dbt_run",
@@ -71,4 +75,5 @@ with DAG(
         env=TASK_ENV,
     )
 
-    extract_load_task >> dbt_run_task >> dbt_test_task
+    # All extract tasks must finish before dbt runs
+    extract_tasks >> dbt_run_task >> dbt_test_task

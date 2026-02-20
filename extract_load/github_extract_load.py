@@ -176,6 +176,14 @@ def load_to_duckdb(stargazers: list[dict], repo: str) -> None:
         con.close()
 
 
+def extract_and_load_repo(repo: str) -> None:
+    """Extract and load a single repo. Used as an individual Airflow task."""
+    log.info("Starting extraction for %s", repo)
+    stargazers = get_stargazers(repo)
+    log.info("[%s] Fetched %s total stargazers", repo, f"{len(stargazers):,}")
+    load_to_duckdb(stargazers, repo)
+
+
 def run_extract_load() -> None:
     """
     Extract all repos in parallel, then load to DuckDB sequentially.
