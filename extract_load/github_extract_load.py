@@ -75,7 +75,7 @@ def _fetch_page(session: requests.Session, repo: str, page: int) -> tuple[int, l
     """Fetch a single page of stargazers. Retries automatically on rate limits."""
     url = f"https://api.github.com/repos/{repo}/stargazers"
     while True:
-        response = session.get(url, params={"per_page": 100, "page": page})
+        response = session.get(url, params={"per_page": 100, "page": page}, timeout=30)
 
         if response.status_code in (403, 429):
             reset_ts = int(response.headers.get("X-RateLimit-Reset", time.time() + 60))
@@ -124,6 +124,7 @@ def get_stargazers(repo: str) -> list[dict]:
     probe = session.get(
         f"https://api.github.com/repos/{repo}/stargazers",
         params={"per_page": 100, "page": 1},
+        timeout=30,
     )
     last_page = min(_parse_last_page(probe.headers.get("Link", "")), MAX_PAGES)
     log.info("[%s] %d pages to fetch (~%s records)", repo, last_page, f"{last_page * 100:,}")
