@@ -31,20 +31,28 @@ REPO_TABLE_MAP = {
     "dlt-hub/dlt":       "raw_dlt",
 }
 
-GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 DUCKDB_PATH = os.getenv(
     "DUCKDB_PATH",
     str(Path(__file__).parent.parent / "data" / "stargazers.duckdb"),
 )
 
+# Per-repo GitHub tokens — each has its own 5,000 req/hr budget.
+# Falls back to GITHUB_TOKEN if a repo-specific token is not set.
+REPO_TOKEN_MAP = {
+    "dbt-labs/dbt-core":  os.getenv("GITHUB_TOKEN_DBT_CORE",  os.getenv("GITHUB_TOKEN")),
+    "apache/airflow":     os.getenv("GITHUB_TOKEN_AIRFLOW",   os.getenv("GITHUB_TOKEN")),
+    "dagster-io/dagster": os.getenv("GITHUB_TOKEN_DAGSTER",   os.getenv("GITHUB_TOKEN")),
+    "duckdb/duckdb":      os.getenv("GITHUB_TOKEN_DUCKDB",    os.getenv("GITHUB_TOKEN")),
+    "dlt-hub/dlt":        os.getenv("GITHUB_TOKEN_DLT",       os.getenv("GITHUB_TOKEN")),
+}
+
 # GitHub caps stargazer results at 40,000 (400 pages × 100)
 MAX_PAGES = 400
-# Concurrent API requests per task.
-# With 5 parallel Airflow tasks, keep this low to avoid GitHub secondary rate limits.
-MAX_WORKERS = 3
+# Concurrent API requests per task — safe now that each repo has its own token
+MAX_WORKERS = 10
 
 
-def _make_session() -> requests.Session:
+def _make_session(repo: str) -> requests.Session:
     session = requests.Session()
     session.headers.update(
         {
@@ -52,10 +60,11 @@ def _make_session() -> requests.Session:
             "X-GitHub-Api-Version": "2022-11-28",
         }
     )
-    if GITHUB_TOKEN:
-        session.headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
+    token = REPO_TOKEN_MAP.get(repo)
+    if token:
+        session.headers["Authorization"] = f"Bearer {token}"
     else:
-        log.warning("No GITHUB_TOKEN set. Unauthenticated requests are limited to 60/hr.")
+        log.warning("[%s] No GitHub token set. Unauthenticated requests are limited to 60/hr.", repo)
     return session
 
 
@@ -109,7 +118,7 @@ def get_stargazers(repo: str) -> list[dict]:
     Safe because each Airflow task is an isolated process and DuckDB
     is not touched until after all fetching is complete.
     """
-    session = _make_session()
+    session = _make_session(repo)
 
     _, first_records = _fetch_page(session, repo, 1)
     if not first_records:
