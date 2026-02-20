@@ -22,6 +22,15 @@ REPOS = [
     "dlt-hub/dlt",
 ]
 
+# Each repo loads into its own DuckDB table — no write contention between tasks
+REPO_TABLE_MAP = {
+    "dbt-labs/dbt-core": "raw_dbt_core",
+    "apache/airflow":    "raw_airflow",
+    "dagster-io/dagster": "raw_dagster",
+    "duckdb/duckdb":     "raw_duckdb",
+    "dlt-hub/dlt":       "raw_dlt",
+}
+
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
 DUCKDB_PATH = os.getenv(
     "DUCKDB_PATH",
@@ -30,7 +39,7 @@ DUCKDB_PATH = os.getenv(
 
 # GitHub caps stargazer results at 40,000 (400 pages × 100)
 MAX_PAGES = 400
-# Concurrent API requests — stays well within the 5,000 req/hr token limit
+# Concurrent API requests per task
 MAX_WORKERS = 10
 
 
@@ -96,12 +105,11 @@ def get_stargazers(repo: str) -> list[dict]:
     Fetch all stargazers for a repo.
     - Fetches page 1 to discover total pages from the Link header.
     - Fetches remaining pages concurrently with MAX_WORKERS threads.
-    Threading is safe here: each task is an isolated process and DuckDB
+    Safe because each Airflow task is an isolated process and DuckDB
     is not touched until after all fetching is complete.
     """
     session = _make_session()
 
-    # Fetch page 1 and discover total pages from Link header
     _, first_records = _fetch_page(session, repo, 1)
     if not first_records:
         return []
@@ -116,7 +124,6 @@ def get_stargazers(repo: str) -> list[dict]:
     if last_page == 1:
         return list(first_records)
 
-    # Fetch remaining pages concurrently
     pages: dict[int, list[dict]] = {1: list(first_records)}
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {
@@ -129,22 +136,24 @@ def get_stargazers(repo: str) -> list[dict]:
             if page_num % 50 == 0:
                 log.info("[%s] ...%d/%d pages done", repo, page_num, last_page)
 
-    # Reassemble in page order
     return [record for p in sorted(pages) for record in pages[p]]
 
 
 def load_to_duckdb(stargazers: list[dict], repo: str) -> None:
     """
-    Load stargazer records into DuckDB.
-    Full refresh per repo (delete + insert) keeps daily runs idempotent.
+    Load stargazer records into a repo-specific DuckDB table.
+    Each repo has its own table so parallel tasks never contend for locks.
+    Full refresh (drop + recreate) keeps daily runs idempotent.
     """
+    table = REPO_TABLE_MAP[repo]
     Path(DUCKDB_PATH).parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(DUCKDB_PATH)
 
     try:
+        con.execute(f"DROP TABLE IF EXISTS {table}")
         con.execute(
-            """
-            CREATE TABLE IF NOT EXISTS raw_stargazers (
+            f"""
+            CREATE TABLE {table} (
                 user_login   VARCHAR,
                 user_id      BIGINT,
                 repo         VARCHAR,
@@ -156,12 +165,10 @@ def load_to_duckdb(stargazers: list[dict], repo: str) -> None:
             """
         )
 
-        con.execute("DELETE FROM raw_stargazers WHERE repo = ?", [repo])
-
         if stargazers:
             con.executemany(
-                """
-                INSERT INTO raw_stargazers
+                f"""
+                INSERT INTO {table}
                     (user_login, user_id, repo, starred_at, avatar_url, html_url, extracted_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -179,10 +186,8 @@ def load_to_duckdb(stargazers: list[dict], repo: str) -> None:
                 ],
             )
 
-        count = con.execute(
-            "SELECT COUNT(*) FROM raw_stargazers WHERE repo = ?", [repo]
-        ).fetchone()[0]
-        log.info("[%s] Loaded %s rows into DuckDB.", repo, f"{count:,}")
+        count = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        log.info("[%s] Loaded %s rows into DuckDB table '%s'.", repo, f"{count:,}", table)
 
     finally:
         con.close()
@@ -197,18 +202,10 @@ def extract_and_load_repo(repo: str) -> None:
 
 
 def run_extract_load() -> None:
-    """
-    Extract all repos in parallel, then load to DuckDB sequentially.
-    (DuckDB doesn't support concurrent writes.)
-    """
+    """Entry point for running all repos locally (outside Airflow)."""
     log.info("Extract-load start | DuckDB: %s", DUCKDB_PATH)
-
     for repo in REPOS:
-        log.info("[%s] Starting extraction...", repo)
-        stargazers = get_stargazers(repo)
-        log.info("[%s] Fetched %s total stargazers", repo, f"{len(stargazers):,}")
-        load_to_duckdb(stargazers, repo)
-
+        extract_and_load_repo(repo)
     log.info("Extract-load complete.")
 
 

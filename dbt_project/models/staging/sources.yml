@@ -3,22 +3,15 @@ version: 2
 sources:
   - name: raw
     schema: main
-    description: "Raw stargazer records loaded from the GitHub API."
+    description: "Raw stargazer records loaded from the GitHub API — one table per repo."
     tables:
-      - name: raw_stargazers
-        description: "One row per (user, repo) star event."
-        columns:
-          - name: user_login
-            description: "GitHub username of the stargazer."
-          - name: user_id
-            description: "Numeric GitHub user ID (stable across username changes)."
-          - name: repo
-            description: "Repository in owner/repo format."
-          - name: starred_at
-            description: "Timestamp when the user starred the repo."
-          - name: avatar_url
-            description: "URL of the user's GitHub avatar."
-          - name: html_url
-            description: "URL of the user's GitHub profile."
-          - name: extracted_at
-            description: "UTC timestamp when this record was extracted."
+      - name: raw_dbt_core
+        description: "Stargazers for dbt-labs/dbt-core."
+      - name: raw_airflow
+        description: "Stargazers for apache/airflow."
+      - name: raw_dagster
+        description: "Stargazers for dagster-io/dagster."
+      - name: raw_duckdb
+        description: "Stargazers for duckdb/duckdb."
+      - name: raw_dlt
+        description: "Stargazers for dlt-hub/dlt."
