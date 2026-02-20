@@ -39,8 +39,9 @@ DUCKDB_PATH = os.getenv(
 
 # GitHub caps stargazer results at 40,000 (400 pages × 100)
 MAX_PAGES = 400
-# Concurrent API requests per task
-MAX_WORKERS = 10
+# Concurrent API requests per task.
+# With 5 parallel Airflow tasks, keep this low to avoid GitHub secondary rate limits.
+MAX_WORKERS = 3
 
 
 def _make_session() -> requests.Session:
