@@ -4,7 +4,6 @@ import re
 import time
 import duckdb
 import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,8 +47,6 @@ REPO_TOKEN_MAP = {
 
 # GitHub caps stargazer results at 40,000 (400 pages × 100)
 MAX_PAGES = 400
-# Concurrent API requests per task — safe now that each repo has its own token
-MAX_WORKERS = 10
 
 
 def _make_session(repo: str) -> requests.Session:
@@ -131,22 +128,16 @@ def get_stargazers(repo: str) -> list[dict]:
     last_page = min(_parse_last_page(probe.headers.get("Link", "")), MAX_PAGES)
     log.info("[%s] %d pages to fetch (~%s records)", repo, last_page, f"{last_page * 100:,}")
 
-    if last_page == 1:
-        return list(first_records)
+    stargazers = list(first_records)
+    for page in range(2, last_page + 1):
+        _, records = _fetch_page(session, repo, page)
+        if not records:
+            break
+        stargazers.extend(records)
+        if page % 50 == 0:
+            log.info("[%s] ...%d/%d pages done (%s records so far)", repo, page, last_page, f"{len(stargazers):,}")
 
-    pages: dict[int, list[dict]] = {1: list(first_records)}
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {
-            executor.submit(_fetch_page, session, repo, p): p
-            for p in range(2, last_page + 1)
-        }
-        for future in as_completed(futures):
-            page_num, records = future.result()
-            pages[page_num] = records
-            if page_num % 50 == 0:
-                log.info("[%s] ...%d/%d pages done", repo, page_num, last_page)
-
-    return [record for p in sorted(pages) for record in pages[p]]
+    return stargazers
 
 
 def load_to_duckdb(stargazers: list[dict], repo: str) -> None:
