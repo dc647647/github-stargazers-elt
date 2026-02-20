@@ -4,6 +4,7 @@ import re
 import time
 import duckdb
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -92,12 +93,15 @@ def _fetch_page(session: requests.Session, repo: str, page: int) -> tuple[int, l
 
 def get_stargazers(repo: str) -> list[dict]:
     """
-    Fetch all stargazers for a repo sequentially, page by page.
-    Sequential to avoid fork+thread conflicts when running inside Airflow.
+    Fetch all stargazers for a repo.
+    - Fetches page 1 to discover total pages from the Link header.
+    - Fetches remaining pages concurrently with MAX_WORKERS threads.
+    Threading is safe here: each task is an isolated process and DuckDB
+    is not touched until after all fetching is complete.
     """
     session = _make_session()
 
-    # Fetch page 1 and read total pages from Link header
+    # Fetch page 1 and discover total pages from Link header
     _, first_records = _fetch_page(session, repo, 1)
     if not first_records:
         return []
@@ -109,16 +113,24 @@ def get_stargazers(repo: str) -> list[dict]:
     last_page = min(_parse_last_page(probe.headers.get("Link", "")), MAX_PAGES)
     log.info("[%s] %d pages to fetch (~%s records)", repo, last_page, f"{last_page * 100:,}")
 
-    stargazers = list(first_records)
-    for page in range(2, last_page + 1):
-        _, records = _fetch_page(session, repo, page)
-        if not records:
-            break
-        stargazers.extend(records)
-        if page % 50 == 0:
-            log.info("[%s] ...%d/%d pages done (%s records so far)", repo, page, last_page, f"{len(stargazers):,}")
+    if last_page == 1:
+        return list(first_records)
 
-    return stargazers
+    # Fetch remaining pages concurrently
+    pages: dict[int, list[dict]] = {1: list(first_records)}
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {
+            executor.submit(_fetch_page, session, repo, p): p
+            for p in range(2, last_page + 1)
+        }
+        for future in as_completed(futures):
+            page_num, records = future.result()
+            pages[page_num] = records
+            if page_num % 50 == 0:
+                log.info("[%s] ...%d/%d pages done", repo, page_num, last_page)
+
+    # Reassemble in page order
+    return [record for p in sorted(pages) for record in pages[p]]
 
 
 def load_to_duckdb(stargazers: list[dict], repo: str) -> None:
