@@ -1,15 +1,17 @@
+import logging
 import os
 import re
 import time
 import duckdb
 import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+log = logging.getLogger(__name__)
 
 REPOS = [
     "dbt-labs/dbt-core",
@@ -42,10 +44,7 @@ def _make_session() -> requests.Session:
     if GITHUB_TOKEN:
         session.headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
     else:
-        print(
-            "WARNING: No GITHUB_TOKEN set. "
-            "Unauthenticated requests are limited to 60/hr."
-        )
+        log.warning("No GITHUB_TOKEN set. Unauthenticated requests are limited to 60/hr.")
     return session
 
 
@@ -64,7 +63,7 @@ def _fetch_page(session: requests.Session, repo: str, page: int) -> tuple[int, l
         if response.status_code in (403, 429):
             reset_ts = int(response.headers.get("X-RateLimit-Reset", time.time() + 60))
             wait_secs = max(reset_ts - time.time(), 0) + 5
-            print(f"  [{repo}] Rate limited on page {page}. Waiting {wait_secs:.0f}s...")
+            log.warning("[%s] Rate limited on page %d. Waiting %.0fs...", repo, page, wait_secs)
             time.sleep(wait_secs)
             continue
 
@@ -93,43 +92,33 @@ def _fetch_page(session: requests.Session, repo: str, page: int) -> tuple[int, l
 
 def get_stargazers(repo: str) -> list[dict]:
     """
-    Fetch all stargazers for a repo in parallel.
-    - Fetches page 1 first to discover total page count from the Link header.
-    - Fetches remaining pages concurrently with MAX_WORKERS threads.
+    Fetch all stargazers for a repo sequentially, page by page.
+    Sequential to avoid fork+thread conflicts when running inside Airflow.
     """
     session = _make_session()
 
-    # Page 1 — needed to discover total pages via Link header
+    # Fetch page 1 and read total pages from Link header
     _, first_records = _fetch_page(session, repo, 1)
     if not first_records:
         return []
 
-    # Peek at the Link header to find the last page
     probe = session.get(
         f"https://api.github.com/repos/{repo}/stargazers",
         params={"per_page": 100, "page": 1},
     )
     last_page = min(_parse_last_page(probe.headers.get("Link", "")), MAX_PAGES)
-    print(f"  [{repo}] {last_page} pages to fetch ({last_page * 100:,} records max)")
+    log.info("[%s] %d pages to fetch (~%s records)", repo, last_page, f"{last_page * 100:,}")
 
-    if last_page == 1:
-        return first_records
+    stargazers = list(first_records)
+    for page in range(2, last_page + 1):
+        _, records = _fetch_page(session, repo, page)
+        if not records:
+            break
+        stargazers.extend(records)
+        if page % 50 == 0:
+            log.info("[%s] ...%d/%d pages done (%s records so far)", repo, page, last_page, f"{len(stargazers):,}")
 
-    # Fetch pages 2..last_page in parallel
-    pages: dict[int, list[dict]] = {1: first_records}
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {
-            executor.submit(_fetch_page, session, repo, p): p
-            for p in range(2, last_page + 1)
-        }
-        for future in as_completed(futures):
-            page_num, records = future.result()
-            pages[page_num] = records
-            if page_num % 50 == 0:
-                print(f"  [{repo}] ...{page_num}/{last_page} pages done")
-
-    # Reassemble in order
-    return [record for p in sorted(pages) for record in pages[p]]
+    return stargazers
 
 
 def load_to_duckdb(stargazers: list[dict], repo: str) -> None:
@@ -181,7 +170,7 @@ def load_to_duckdb(stargazers: list[dict], repo: str) -> None:
         count = con.execute(
             "SELECT COUNT(*) FROM raw_stargazers WHERE repo = ?", [repo]
         ).fetchone()[0]
-        print(f"  [{repo}] Loaded {count:,} rows into DuckDB.")
+        log.info("[%s] Loaded %s rows into DuckDB.", repo, f"{count:,}")
 
     finally:
         con.close()
@@ -192,23 +181,15 @@ def run_extract_load() -> None:
     Extract all repos in parallel, then load to DuckDB sequentially.
     (DuckDB doesn't support concurrent writes.)
     """
-    print(f"EL start | DuckDB: {DUCKDB_PATH}\n")
+    log.info("Extract-load start | DuckDB: %s", DUCKDB_PATH)
 
-    # Fetch all repos concurrently
-    results: dict[str, list[dict]] = {}
-    with ThreadPoolExecutor(max_workers=len(REPOS)) as executor:
-        futures = {executor.submit(get_stargazers, repo): repo for repo in REPOS}
-        for future in as_completed(futures):
-            repo = futures[future]
-            stargazers = future.result()
-            results[repo] = stargazers
-            print(f"[{repo}] Fetched {len(stargazers):,} total stargazers\n")
-
-    # Load sequentially
     for repo in REPOS:
-        load_to_duckdb(results[repo], repo)
+        log.info("[%s] Starting extraction...", repo)
+        stargazers = get_stargazers(repo)
+        log.info("[%s] Fetched %s total stargazers", repo, f"{len(stargazers):,}")
+        load_to_duckdb(stargazers, repo)
 
-    print("\nExtract-load complete.")
+    log.info("Extract-load complete.")
 
 
 if __name__ == "__main__":
