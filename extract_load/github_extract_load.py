@@ -144,12 +144,25 @@ def get_stargazers(repo: str) -> list[dict]:
 def load_to_duckdb(stargazers: list[dict], repo: str) -> None:
     """
     Load stargazer records into a repo-specific DuckDB table.
-    Each repo has its own table so parallel tasks never contend for locks.
+    Retries with backoff when another task holds the DuckDB file lock.
     Full refresh (drop + recreate) keeps daily runs idempotent.
     """
     table = REPO_TABLE_MAP[repo]
     Path(DUCKDB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    con = duckdb.connect(DUCKDB_PATH)
+
+    # DuckDB allows only one writer at a time — retry until the lock is free
+    max_retries = 12
+    for attempt in range(max_retries):
+        try:
+            con = duckdb.connect(DUCKDB_PATH)
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait = 5 * (attempt + 1)
+                log.warning("[%s] DuckDB locked, retrying in %ds (attempt %d/%d)...", repo, wait, attempt + 1, max_retries)
+                time.sleep(wait)
+            else:
+                raise
 
     try:
         con.execute(f"DROP TABLE IF EXISTS {table}")
