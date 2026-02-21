@@ -5,7 +5,6 @@ Runs once daily:
   1. extract_load__{repo}  – one BashOperator per repo (fresh subprocess, avoids
                              macOS fork+network issues with PythonOperator)
   2. dbt_build             – builds dbt models (stg, int, dim, agg)
-  3. dbt_test              – runs dbt tests to validate the output
 
 Prerequisites
 -------------
