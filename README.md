@@ -114,8 +114,11 @@ export AIRFLOW_HOME=$(pwd)
 airflow db migrate
 
 # 6. Start Airflow
+export no_proxy='*'          # required on macOS to prevent SIGSEGV on task execution
+export AIRFLOW_HOME=$(pwd)   # must be set in every new terminal session
 airflow standalone
-# Creates an admin user and launches the scheduler + webserver
+# Creates an admin user — credentials are printed in the terminal output
+# and saved to simple_auth_manager_passwords.json.generated
 ```
 
 Go to **http://localhost:8080**, log in with the credentials printed in the
