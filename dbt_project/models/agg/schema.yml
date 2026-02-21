@@ -1,18 +1,6 @@
 version: 2
 
 models:
-  - name: stargazer_summary
-    description: "All stargazer events — a pass-through of dim_stargazers."
-    columns:
-      - name: user_login
-        tests: [not_null]
-      - name: user_id
-        tests: [not_null]
-      - name: repo
-        tests: [not_null]
-      - name: starred_at
-        tests: [not_null]
-
   - name: agg_stars_per_repo
     description: "Total star count per tracked repo."
     columns:

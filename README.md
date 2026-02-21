@@ -46,7 +46,6 @@ github-stargazers-elt/
 │       │   ├── dim_stargazers.sql    # All star events (pass-through of int_stargazers)
 │       │   └── date_series.sql       # Calendar table with date attributes and flags
 │       └── agg/                      # Metric and analytical models
-│           ├── stargazer_summary.sql
 │           ├── agg_stars_per_repo.sql
 │           ├── agg_stars_over_time.sql
 │           ├── agg_stargazer_overlap.sql
@@ -98,7 +97,6 @@ all tracked repos.
 
 | Model | Description |
 |-------|-------------|
-| `stargazer_summary` | All star events — pass-through of `dim_stargazers` |
 | `agg_stars_per_repo` | Total star count per repo |
 | `agg_stars_over_time` | Daily and cumulative star counts per repo, date-spined so every day has a row |
 | `agg_stargazer_overlap` | Number of users grouped by how many tracked repos they starred |

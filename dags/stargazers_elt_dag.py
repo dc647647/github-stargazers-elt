@@ -4,7 +4,7 @@ Airflow DAG: stargazers_elt
 Runs once daily:
   1. extract_load__{repo}  – one BashOperator per repo (fresh subprocess, avoids
                              macOS fork+network issues with PythonOperator)
-  2. dbt_run               – runs dbt models (stg_stargazers, stargazer_summary)
+  2. dbt_run               – runs dbt models (stg_stargazers)
   3. dbt_test              – runs dbt tests to validate the output
 
 Prerequisites
