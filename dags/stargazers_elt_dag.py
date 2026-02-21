@@ -15,7 +15,6 @@ Prerequisites
 """
 
 import os
-import sys
 from pathlib import Path
 
 import pendulum
@@ -23,9 +22,14 @@ from airflow import DAG
 from airflow.operators.bash import BashOperator
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
-from extract_load.github_extract_load import REPOS  # noqa: E402
+REPOS = [
+    "dbt-labs/dbt-core",
+    "apache/airflow",
+    "dagster-io/dagster",
+    "duckdb/duckdb",
+    "dlt-hub/dlt",
+]
 
 DBT_PROJECT_DIR = str(PROJECT_ROOT / "dbt_project")
 PYTHON = str(PROJECT_ROOT / "venv" / "bin" / "python")
