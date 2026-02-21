@@ -33,6 +33,22 @@ models:
       - name: cumulative_stars
         tests: [not_null]
 
+  - name: agg_user_activity
+    description: "Per-user star activity: repos starred, first/last star date, avg days between stars."
+    columns:
+      - name: user_login
+        tests: [not_null]
+      - name: user_id
+        tests: [not_null, unique]
+      - name: repos_starred_count
+        tests: [not_null]
+      - name: repos_starred
+        tests: [not_null]
+      - name: first_starred_at
+        tests: [not_null]
+      - name: last_starred_at
+        tests: [not_null]
+
   - name: agg_stargazer_overlap
     description: "Number of users grouped by how many tracked repos they have starred."
     columns:
