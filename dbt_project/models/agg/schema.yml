@@ -1,0 +1,42 @@
+version: 2
+
+models:
+  - name: stargazer_summary
+    description: "All stargazer events — a pass-through of dim_stargazers."
+    columns:
+      - name: user_login
+        tests: [not_null]
+      - name: user_id
+        tests: [not_null]
+      - name: repo
+        tests: [not_null]
+      - name: starred_at
+        tests: [not_null]
+
+  - name: mart_stars_per_repo
+    description: "Total star count per tracked repo."
+    columns:
+      - name: repo
+        tests: [not_null, unique]
+      - name: total_stars
+        tests: [not_null]
+
+  - name: mart_stars_over_time
+    description: "Daily and cumulative star counts per repo over time."
+    columns:
+      - name: repo
+        tests: [not_null]
+      - name: starred_date
+        tests: [not_null]
+      - name: stars_on_day
+        tests: [not_null]
+      - name: cumulative_stars
+        tests: [not_null]
+
+  - name: mart_stargazer_overlap
+    description: "Number of users grouped by how many tracked repos they have starred."
+    columns:
+      - name: repos_starred_count
+        tests: [not_null, unique]
+      - name: user_count
+        tests: [not_null]

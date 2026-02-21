@@ -3,7 +3,7 @@ with daily as (
         repo,
         cast(starred_at as date) as starred_date,
         count(*)                 as stars_on_day
-    from {{ ref('int_stargazers') }}
+    from {{ ref('dim_stargazers') }}
     group by repo, cast(starred_at as date)
 ),
 
