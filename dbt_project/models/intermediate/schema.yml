@@ -1,0 +1,14 @@
+version: 2
+
+models:
+  - name: int_stargazers
+    description: "Union of all staging stargazer models — one row per (user, repo) star event across all tracked repos."
+    columns:
+      - name: user_login
+        tests: [not_null]
+      - name: user_id
+        tests: [not_null]
+      - name: repo
+        tests: [not_null]
+      - name: starred_at
+        tests: [not_null]

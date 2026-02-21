@@ -5,7 +5,7 @@
   from our tracked list each user has starred.
 */
 with stargazers as (
-    select * from {{ ref('stg_stargazers') }}
+    select * from {{ ref('int_stargazers') }}
 ),
 
 summary as (

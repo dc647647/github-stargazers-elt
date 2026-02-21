@@ -1,29 +1,30 @@
 version: 2
 
 models:
-  - name: stg_stargazers
-    description: "Cleaned, typed stargazer records. One row per (user, repo) star event."
-    columns:
+  - name: stg_dbt_core
+    description: "Staged stargazers for dbt-labs/dbt-core."
+    columns: &stargazer_columns
       - name: user_login
-        description: "GitHub username."
-        tests:
-          - not_null
+        tests: [not_null]
       - name: user_id
-        description: "Numeric GitHub user ID."
-        tests:
-          - not_null
+        tests: [not_null]
       - name: repo
-        description: "Repository in owner/repo format."
-        tests:
-          - not_null
-          - accepted_values:
-              values:
-                - "dbt-labs/dbt-core"
-                - "apache/airflow"
-                - "dagster-io/dagster"
-                - "duckdb/duckdb"
-                - "dlt-hub/dlt"
+        tests: [not_null]
       - name: starred_at
-        description: "Timestamp of the star event."
-        tests:
-          - not_null
+        tests: [not_null]
+
+  - name: stg_airflow
+    description: "Staged stargazers for apache/airflow."
+    columns: *stargazer_columns
+
+  - name: stg_dagster
+    description: "Staged stargazers for dagster-io/dagster."
+    columns: *stargazer_columns
+
+  - name: stg_duckdb
+    description: "Staged stargazers for duckdb/duckdb."
+    columns: *stargazer_columns
+
+  - name: stg_dlt
+    description: "Staged stargazers for dlt-hub/dlt."
+    columns: *stargazer_columns
