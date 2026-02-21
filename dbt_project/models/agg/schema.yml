@@ -13,7 +13,7 @@ models:
       - name: starred_at
         tests: [not_null]
 
-  - name: mart_stars_per_repo
+  - name: agg_stars_per_repo
     description: "Total star count per tracked repo."
     columns:
       - name: repo
@@ -21,7 +21,7 @@ models:
       - name: total_stars
         tests: [not_null]
 
-  - name: mart_stars_over_time
+  - name: agg_stars_over_time
     description: "Daily and cumulative star counts per repo over time."
     columns:
       - name: repo
@@ -33,7 +33,7 @@ models:
       - name: cumulative_stars
         tests: [not_null]
 
-  - name: mart_stargazer_overlap
+  - name: agg_stargazer_overlap
     description: "Number of users grouped by how many tracked repos they have starred."
     columns:
       - name: repos_starred_count

@@ -19,7 +19,7 @@ con = duckdb.connect(DUCKDB_PATH, read_only=True)
 
 # ── Stars per repo ──────────────────────────────────────────────────────────
 st.subheader("Total Stars per Repo")
-stars_per_repo = con.execute("SELECT * FROM mart_stars_per_repo").df()
+stars_per_repo = con.execute("SELECT * FROM agg_stars_per_repo").df()
 fig = px.bar(
     stars_per_repo,
     x="repo",
@@ -34,7 +34,7 @@ st.plotly_chart(fig, use_container_width=True)
 
 # ── Stars over time ─────────────────────────────────────────────────────────
 st.subheader("Cumulative Stars Over Time")
-stars_over_time = con.execute("SELECT * FROM mart_stars_over_time").df()
+stars_over_time = con.execute("SELECT * FROM agg_stars_over_time").df()
 fig2 = px.line(
     stars_over_time,
     x="starred_date",
@@ -47,7 +47,7 @@ st.plotly_chart(fig2, use_container_width=True)
 
 # ── Stargazer overlap ───────────────────────────────────────────────────────
 st.subheader("Stargazer Overlap — How Many Repos Did Users Star?")
-overlap = con.execute("SELECT * FROM mart_stargazer_overlap").df()
+overlap = con.execute("SELECT * FROM agg_stargazer_overlap").df()
 overlap["repos_starred_count"] = overlap["repos_starred_count"].astype(str)
 fig3 = px.bar(
     overlap,
