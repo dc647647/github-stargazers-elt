@@ -11,10 +11,14 @@ DUCKDB_PATH = os.getenv(
 )
 
 st.set_page_config(page_title="GitHub Stargazers Dashboard", layout="wide")
-st.title("GitHub Stargazers Dashboard")
-st.caption(f"Data source: `{DUCKDB_PATH}`")
 
 con = duckdb.connect(DUCKDB_PATH, read_only=True)
+
+last_updated = con.execute("SELECT MAX(extracted_at) FROM dim_stargazers").fetchone()[0]
+last_updated_str = last_updated.strftime("%B %d, %Y %H:%M UTC") if last_updated else "unknown"
+
+st.title("GitHub Stargazers Dashboard")
+st.caption(f"Data last updated: {last_updated_str}")
 
 tab_repo, tab_user = st.tabs(["Repo Analytics", "User Analytics"])
 
