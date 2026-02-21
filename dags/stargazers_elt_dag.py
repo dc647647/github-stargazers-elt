@@ -72,10 +72,4 @@ with DAG(
         env=TASK_ENV,
     )
 
-    dbt_test_task = BashOperator(
-        task_id="dbt_test",
-        bash_command=f"cd {DBT_PROJECT_DIR} && dbt test --profiles-dir .",
-        env=TASK_ENV,
-    )
-
-    extract_tasks >> dbt_build_task >> dbt_test_task
+    extract_tasks >> dbt_build_task
