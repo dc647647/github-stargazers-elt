@@ -187,6 +187,28 @@ of paginated API calls, capped by GitHub at 40,000 records (400 pages × 100).
 With an authenticated token (5,000 req/hr) the full pipeline completes in ~4
 minutes with all five repos running in parallel.
 
+### Manual loading over dlt
+[dlt](https://github.com/dlt-hub/dlt) was evaluated as the loading layer. It
+offers schema inference, destination abstraction, and built-in incremental
+loading — all compelling for a production pipeline. However, it was not used
+here for one key reason: **dlt's full-refresh (replace) strategy for DuckDB
+always runs a `DELETE FROM <table>` before creating or inserting**, which
+assumes the table already exists. In our parallel setup, five Airflow tasks
+race to write to the same DuckDB file simultaneously. Under file-lock
+contention, a task can fail mid-flight leaving the table in a dropped state —
+causing the next dlt operation to error on the missing table with no
+graceful recovery.
+
+The plain `requests` + `duckdb` approach gives us full control: we drop,
+recreate, and insert within a single connection held for the duration of the
+write, with an explicit retry loop around the lock acquisition. This is simpler,
+more predictable, and completes the full pipeline in ~4 minutes with all five
+repos running in parallel.
+
+In a production environment with a cloud database (Snowflake, BigQuery,
+Postgres), dlt would be the right choice — concurrent writers are supported
+natively and incremental loading would reduce the daily run to seconds.
+
 ### Per-repo GitHub tokens
 Each repo can use a separate GitHub token (`GITHUB_TOKEN_DBT_CORE`, etc.),
 giving each its own 5,000 req/hr rate-limit budget. Falls back to
