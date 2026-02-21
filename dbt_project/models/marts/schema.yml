@@ -6,6 +6,12 @@ models:
     columns:
       - name: date_day
         tests: [not_null, unique]
+      - name: date_month
+        tests: [not_null]
+      - name: date_quarter
+        tests: [not_null]
+      - name: date_half
+        tests: [not_null]
       - name: is_weekend
         tests: [not_null]
       - name: is_weekday
