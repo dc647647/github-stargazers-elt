@@ -4,7 +4,7 @@ Airflow DAG: stargazers_elt
 Runs once daily:
   1. extract_load__{repo}  – one BashOperator per repo (fresh subprocess, avoids
                              macOS fork+network issues with PythonOperator)
-  2. dbt_run               – runs dbt models (stg_stargazers)
+  2. dbt_build             – builds dbt models (stg, int, dim, agg)
   3. dbt_test              – runs dbt tests to validate the output
 
 Prerequisites
@@ -66,9 +66,9 @@ with DAG(
         for repo in REPOS
     ]
 
-    dbt_run_task = BashOperator(
-        task_id="dbt_run",
-        bash_command=f"cd {DBT_PROJECT_DIR} && dbt run --profiles-dir .",
+    dbt_build_task = BashOperator(
+        task_id="dbt_build",
+        bash_command=f"cd {DBT_PROJECT_DIR} && dbt build --profiles-dir .",
         env=TASK_ENV,
     )
 
@@ -78,4 +78,4 @@ with DAG(
         env=TASK_ENV,
     )
 
-    extract_tasks >> dbt_run_task >> dbt_test_task
+    extract_tasks >> dbt_build_task >> dbt_test_task
