@@ -3,7 +3,8 @@
 An open-source ELT pipeline that tracks who has starred a curated list of
 data-engineering repos on GitHub, loads the raw data into DuckDB, and
 transforms it with dbt. The entire pipeline is orchestrated by Apache Airflow
-and runs once per day.
+and runs once per day. A Streamlit dashboard provides interactive analytics
+at both the repo and individual user level.
 
 ---
 
@@ -31,13 +32,26 @@ github-stargazers-elt/
 │   ├── dbt_project.yml
 │   ├── profiles.yml                  # DuckDB adapter config
 │   └── models/
-│       ├── staging/
+│       ├── staging/                  # One view per raw table, explicit columns
 │       │   ├── sources.yml
 │       │   ├── schema.yml
-│       │   └── stg_stargazers.sql    # typed, cleaned view
-│       └── marts/
-│           ├── schema.yml
-│           └── stargazer_summary.sql # one row per user, count of repos starred
+│       │   ├── stg_dbt_core.sql
+│       │   ├── stg_airflow.sql
+│       │   ├── stg_dagster.sql
+│       │   ├── stg_duckdb.sql
+│       │   └── stg_dlt.sql
+│       ├── intermediate/             # Union of all staging models
+│       │   └── int_stargazers.sql
+│       ├── marts/                    # Core dimension tables
+│       │   ├── dim_stargazers.sql    # All star events (pass-through of int_stargazers)
+│       │   └── date_series.sql       # Calendar table with date attributes and flags
+│       └── agg/                      # Metric and analytical models
+│           ├── stargazer_summary.sql
+│           ├── agg_stars_per_repo.sql
+│           ├── agg_stars_over_time.sql
+│           ├── agg_stargazer_overlap.sql
+│           └── agg_user_activity.sql
+├── streamlit_app.py                  # BI dashboard (repo + user analytics)
 ├── data/                             # DuckDB file lives here (gitignored)
 ├── .env.example
 ├── requirements.txt
@@ -48,9 +62,11 @@ github-stargazers-elt/
 
 ## Data Model
 
-### Raw layer — `raw_stargazers`
+### Raw layer — one table per repo
 
-Written directly by `extract_load/github_extract_load.py`.
+Written directly by `extract_load/github_extract_load.py`. Each repo gets its
+own table (`raw_dbt_core`, `raw_airflow`, `raw_dagster`, `raw_duckdb`, `raw_dlt`)
+so parallel Airflow tasks can write without contention.
 
 | Column | Type | Description |
 |--------|------|-------------|
@@ -62,22 +78,31 @@ Written directly by `extract_load/github_extract_load.py`.
 | `html_url` | VARCHAR | GitHub profile URL |
 | `extracted_at` | TIMESTAMPTZ | When this row was extracted |
 
-### Staging — `stg_stargazers` (view)
+### Staging — `stg_*` (views)
 
-Light cleaning and type casting on top of `raw_stargazers`. Same shape, stricter types.
+One view per raw table with explicit column selection and type casting. No `SELECT *`.
 
-### Mart — `stargazer_summary` (table)
+### Intermediate — `int_stargazers` (view)
 
-One row per GitHub user. The primary analytical output.
+Union of all five staging models — one row per `(user, repo)` star event across
+all tracked repos.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| `user_id` | BIGINT | Stable GitHub user ID (primary key) |
-| `user_login` | VARCHAR | GitHub username |
-| `repos_starred_count` | BIGINT | Number of tracked repos starred |
-| `repos_starred` | VARCHAR[] | Ordered list of repos starred (by `starred_at`) |
-| `first_starred_at` | TIMESTAMPTZ | Earliest star across all tracked repos |
-| `last_starred_at` | TIMESTAMPTZ | Most recent star across all tracked repos |
+### Marts — `dim_stargazers`, `date_series` (tables)
+
+| Model | Description |
+|-------|-------------|
+| `dim_stargazers` | Materialized pass-through of `int_stargazers` — the base table for all agg models |
+| `date_series` | Calendar table from 2013-01-01 to today with `year`, `quarter`, `month`, `week_of_year`, `day_name`, `is_weekend`, `is_weekday`, `date_month`, `date_quarter`, `date_half` |
+
+### Agg — analytical models (tables)
+
+| Model | Description |
+|-------|-------------|
+| `stargazer_summary` | All star events — pass-through of `dim_stargazers` |
+| `agg_stars_per_repo` | Total star count per repo |
+| `agg_stars_over_time` | Daily and cumulative star counts per repo, date-spined so every day has a row |
+| `agg_stargazer_overlap` | Number of users grouped by how many tracked repos they starred |
+| `agg_user_activity` | Per-user stats: repos starred, first/last star date, avg days between stars |
 
 ---
 
@@ -100,16 +125,16 @@ cd github-stargazers-elt
 
 # 2. Create and activate a virtual environment
 python -m venv venv
-source venv/bin/activate      # Windows: venv\Scripts\activate
+source venv/bin/activate
 
 # 3. Install dependencies
 pip install -r requirements.txt
 
 # 4. Configure environment variables
 cp .env.example .env
-# Open .env and set your GITHUB_TOKEN
+# Open .env and set GITHUB_TOKEN (and optionally per-repo tokens)
 
-# 5. Initialise Airflow (sets project root as AIRFLOW_HOME)
+# 5. Initialise Airflow
 export AIRFLOW_HOME=$(pwd)
 airflow db migrate
 
@@ -117,50 +142,67 @@ airflow db migrate
 export no_proxy='*'          # required on macOS to prevent SIGSEGV on task execution
 export AIRFLOW_HOME=$(pwd)   # must be set in every new terminal session
 airflow standalone
-# Creates an admin user — credentials are printed in the terminal output
-# and saved to simple_auth_manager_passwords.json.generated
+# Credentials are printed in the terminal output and saved to
+# simple_auth_manager_passwords.json.generated
 ```
 
-Go to **http://localhost:8080**, log in with the credentials printed in the
-terminal, enable the `stargazers_elt` DAG, and trigger a manual run.
+Go to **http://localhost:8080**, log in, enable the `stargazers_elt` DAG, and
+trigger a manual run.
 
 ---
 
 ## Running Without Airflow (development / one-off)
 
 ```bash
-# Extract from GitHub and load raw data into DuckDB
+# Extract and load a single repo
+python -m extract_load.github_extract_load "dbt-labs/dbt-core"
+
+# Extract and load all repos
 python -m extract_load.github_extract_load
 
 # Run dbt transformations
-cd dbt_project
-dbt run --profiles-dir .
+dbt run --project-dir dbt_project --profiles-dir dbt_project
 
 # Run dbt tests
-dbt test --profiles-dir .
+dbt test --project-dir dbt_project --profiles-dir dbt_project
+
+# Launch the Streamlit dashboard
+streamlit run streamlit_app.py
 ```
 
 ---
 
 ## Design Decisions & Trade-offs
 
+### Per-repo raw tables
+Each repo is extracted into its own DuckDB table (`raw_dbt_core`, `raw_airflow`,
+etc.) so five parallel Airflow tasks can run simultaneously without write
+contention. dbt then unions them in the `int_stargazers` intermediate model.
+
 ### Full refresh per repo (not incremental)
-Each daily run deletes and re-inserts all records for a given repo before
-re-fetching. This keeps the logic simple and handles both new stars **and**
-removed stars correctly. The trade-off is runtime: repos like apache/airflow
-(~38 k stars) require hundreds of paginated API calls. With an authenticated
-token (5,000 req/hr) this completes in a few minutes per repo.
+Each daily run drops and re-inserts all records for a given repo. This keeps
+the logic simple and correctly handles both new stars and removed stars. The
+trade-off is runtime — repos like apache/airflow (~40k stars) require hundreds
+of paginated API calls, capped by GitHub at 40,000 records (400 pages × 100).
+With an authenticated token (5,000 req/hr) the full pipeline completes in ~4
+minutes with all five repos running in parallel.
+
+### Per-repo GitHub tokens
+Each repo can use a separate GitHub token (`GITHUB_TOKEN_DBT_CORE`, etc.),
+giving each its own 5,000 req/hr rate-limit budget. Falls back to
+`GITHUB_TOKEN` if a repo-specific token is not set.
+
+### Date spine in `agg_stars_over_time`
+The `date_series` calendar table is cross-joined with each repo's date range so
+every day has a row — zero-filled for `stars_on_day`, with `cumulative_stars`
+carrying forward correctly as a step function rather than a linearly
+interpolated diagonal.
 
 ### DuckDB over Postgres
 DuckDB is a zero-config, file-based analytical database. No server to spin up,
 no connection strings to manage — the entire database is a single `.duckdb`
 file that travels with the project.
 
-### dbt-duckdb adapter
-`dbt-duckdb` connects dbt directly to the DuckDB file, keeping the full stack
-local. `profiles.yml` is committed to the repo (no secrets) and reads the
-database path from the `DUCKDB_PATH` environment variable.
-
 ### `user_id` as the stable user key
 GitHub usernames can change. `user_id` is the permanent numeric identifier
-assigned by GitHub and is used as the primary key in `stargazer_summary`.
+assigned by GitHub and is used as the primary key throughout.
