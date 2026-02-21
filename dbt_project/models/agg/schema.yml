@@ -22,7 +22,7 @@ models:
         tests: [not_null]
 
   - name: agg_stars_over_time
-    description: "Daily and cumulative star counts per repo over time."
+    description: "Daily and cumulative star counts per repo, date-spined so every day has a row."
     columns:
       - name: repo
         tests: [not_null]
@@ -31,6 +31,10 @@ models:
       - name: stars_on_day
         tests: [not_null]
       - name: cumulative_stars
+        tests: [not_null]
+      - name: is_weekend
+        tests: [not_null]
+      - name: is_weekday
         tests: [not_null]
 
   - name: agg_user_activity

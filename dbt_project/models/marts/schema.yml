@@ -1,6 +1,16 @@
 version: 2
 
 models:
+  - name: date_series
+    description: "Calendar table from 2013-01-01 to today, one row per day, with date attributes and flags."
+    columns:
+      - name: date_day
+        tests: [not_null, unique]
+      - name: is_weekend
+        tests: [not_null]
+      - name: is_weekday
+        tests: [not_null]
+
   - name: dim_stargazers
     description: "All stargazer events — a materialized pass-through of int_stargazers."
     columns:
