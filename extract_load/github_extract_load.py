@@ -2,11 +2,14 @@ import logging
 import os
 import re
 import time
-import duckdb
 import requests
 from datetime import datetime, timezone
 from pathlib import Path
 
+import shutil
+
+import dlt
+import duckdb
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -90,16 +93,17 @@ def _fetch_page(session: requests.Session, repo: str, page: int) -> tuple[int, l
 
         response.raise_for_status()
         data = response.json()
-        extracted_at = datetime.now(timezone.utc).isoformat()
+        extracted_at = datetime.now(timezone.utc)
 
         records = [
             {
-                "user_login": item["user"]["login"],
-                "user_id": item["user"]["id"],
-                "repo": repo,
-                "starred_at": item.get("starred_at"),
-                "avatar_url": item["user"]["avatar_url"],
-                "html_url": item["user"]["html_url"],
+                "user_login":   item["user"]["login"],
+                "user_id":      item["user"]["id"],
+                "repo":         repo,
+                "starred_at":   datetime.fromisoformat(item["starred_at"].replace("Z", "+00:00"))
+                                if item.get("starred_at") else None,
+                "avatar_url":   item["user"]["avatar_url"],
+                "html_url":     item["user"]["html_url"],
                 "extracted_at": extracted_at,
             }
             for item in data
@@ -108,13 +112,7 @@ def _fetch_page(session: requests.Session, repo: str, page: int) -> tuple[int, l
 
 
 def get_stargazers(repo: str) -> list[dict]:
-    """
-    Fetch all stargazers for a repo.
-    - Fetches page 1 to discover total pages from the Link header.
-    - Fetches remaining pages concurrently with MAX_WORKERS threads.
-    Safe because each Airflow task is an isolated process and DuckDB
-    is not touched until after all fetching is complete.
-    """
+    """Fetch all stargazers for a repo, page by page."""
     session = _make_session(repo)
 
     _, first_records = _fetch_page(session, repo, 1)
@@ -141,71 +139,51 @@ def get_stargazers(repo: str) -> list[dict]:
     return stargazers
 
 
-def load_to_duckdb(stargazers: list[dict], repo: str) -> None:
+def load_with_dlt(records: list[dict], repo: str) -> None:
     """
-    Load stargazer records into a repo-specific DuckDB table.
+    Load stargazer records into DuckDB via dlt.
+    dlt handles schema inference, table creation, and full-refresh (replace).
     Retries with backoff when another task holds the DuckDB file lock.
-    Full refresh (drop + recreate) keeps daily runs idempotent.
     """
-    table = REPO_TABLE_MAP[repo]
-    Path(DUCKDB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    table_name = REPO_TABLE_MAP[repo]
 
-    # DuckDB allows only one writer at a time — retry until the lock is free
+    pipeline_name = f"stargazers_{table_name}"
+
+    # Clear any stuck pipeline state from previous failed runs
+    pipeline_dir = Path.home() / ".dlt" / "pipelines" / pipeline_name
+    shutil.rmtree(pipeline_dir, ignore_errors=True)
+
+    def _records_gen():
+        yield from records
+
     max_retries = 12
     for attempt in range(max_retries):
         try:
+            # Full refresh: drop the table so dlt creates it fresh with its schema.
+            # We use append disposition since the table is empty after the drop.
             con = duckdb.connect(DUCKDB_PATH)
-            break
+            con.execute(f"DROP TABLE IF EXISTS {table_name}")
+            con.close()
+
+            pipeline = dlt.pipeline(
+                pipeline_name=pipeline_name,
+                destination=dlt.destinations.duckdb(credentials=DUCKDB_PATH),
+                dataset_name="main",
+            )
+            info = pipeline.run(
+                _records_gen(),
+                table_name=table_name,
+                write_disposition="append",
+            )
+            log.info("[%s] dlt loaded %s rows into '%s'. %s", repo, f"{len(records):,}", table_name, info)
+            return
         except Exception as e:
-            if attempt < max_retries - 1:
+            if attempt < max_retries - 1 and "lock" in str(e).lower():
                 wait = 5 * (attempt + 1)
                 log.warning("[%s] DuckDB locked, retrying in %ds (attempt %d/%d)...", repo, wait, attempt + 1, max_retries)
                 time.sleep(wait)
             else:
                 raise
-
-    try:
-        con.execute(f"DROP TABLE IF EXISTS {table}")
-        con.execute(
-            f"""
-            CREATE TABLE {table} (
-                user_login   VARCHAR,
-                user_id      BIGINT,
-                repo         VARCHAR,
-                starred_at   TIMESTAMPTZ,
-                avatar_url   VARCHAR,
-                html_url     VARCHAR,
-                extracted_at TIMESTAMPTZ
-            )
-            """
-        )
-
-        if stargazers:
-            con.executemany(
-                f"""
-                INSERT INTO {table}
-                    (user_login, user_id, repo, starred_at, avatar_url, html_url, extracted_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        s["user_login"],
-                        s["user_id"],
-                        s["repo"],
-                        s["starred_at"],
-                        s["avatar_url"],
-                        s["html_url"],
-                        s["extracted_at"],
-                    )
-                    for s in stargazers
-                ],
-            )
-
-        count = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-        log.info("[%s] Loaded %s rows into DuckDB table '%s'.", repo, f"{count:,}", table)
-
-    finally:
-        con.close()
 
 
 def extract_and_load_repo(repo: str) -> None:
@@ -213,7 +191,7 @@ def extract_and_load_repo(repo: str) -> None:
     log.info("Starting extraction for %s", repo)
     stargazers = get_stargazers(repo)
     log.info("[%s] Fetched %s total stargazers", repo, f"{len(stargazers):,}")
-    load_to_duckdb(stargazers, repo)
+    load_with_dlt(stargazers, repo)
 
 
 def run_extract_load() -> None:
